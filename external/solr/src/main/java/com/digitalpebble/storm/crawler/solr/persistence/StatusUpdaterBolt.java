@@ -96,6 +96,7 @@ public class StatusUpdaterBolt extends AbstractStatusUpdaterBolt {
                 connection.getClient().commit();
             } catch (Exception e) {
                 LOG.error("Updating status for {} failed due to: {}", url, e);
+                throw new RuntimeException(e);
             }
 
             counter = 0;
