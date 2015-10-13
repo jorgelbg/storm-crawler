@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,9 +17,7 @@
 
 package com.digitalpebble.storm.crawler.spout;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,7 +25,10 @@ import java.nio.file.Paths;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.LineIterator;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +49,8 @@ public class FileSpout extends BaseRichSpout {
     private SpoutOutputCollector _collector;
     private String[] _inputFiles;
     private Scheme _scheme;
+    private int _inputPos = -1;
+    private LineIterator iterator = null;
 
     private LinkedList<byte[]> toPut = new LinkedList<byte[]>();
     private boolean active;
@@ -57,8 +60,8 @@ public class FileSpout extends BaseRichSpout {
     public FileSpout(String dir, String filter, Scheme scheme) {
         Path pdir = Paths.get(dir);
         List<String> f = new LinkedList<String>();
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(pdir,
-                filter)) {
+        try (DirectoryStream<Path> stream = Files
+                .newDirectoryStream(pdir, filter)) {
             for (Path entry : stream) {
                 String inputFile = entry.toAbsolutePath().toString();
                 f.add(inputFile);
@@ -84,36 +87,64 @@ public class FileSpout extends BaseRichSpout {
         _inputFiles = files;
     }
 
+    private LineIterator updateIterator() {
+        _inputPos++; // move to the next file
+
+        try {
+            iterator = FileUtils
+                    .lineIterator(Paths.get(_inputFiles[_inputPos]).toFile(),
+                            "UTF-8");
+
+            return iterator;
+        } catch (IOException e) {
+            // This file couldn't be processed
+            System.err.format("IOException: %s%n", e);
+        }
+
+        return null;
+    }
+
+    private String nextLine() {
+        try {
+            String line;
+
+            while ((line = iterator.nextLine()) != null && StringUtils
+                    .isBlank(line))
+                continue;
+
+            return line;
+        } catch (NoSuchElementException e) {
+            if (_inputPos < _inputFiles.length - 1) {
+                updateIterator();
+            } else {
+                return null; // no more lines or files
+            }
+        }
+
+        return null;
+    }
+
     @SuppressWarnings("rawtypes")
     @Override
     public void open(Map conf, TopologyContext context,
             SpoutOutputCollector collector) {
         _collector = collector;
 
-        for (String inputFile : _inputFiles) {
-            Path inputPath = Paths.get(inputFile);
-            try (BufferedReader reader = Files.newBufferedReader(inputPath,
-                    StandardCharsets.UTF_8)) {
-                String line = null;
-                while ((line = reader.readLine()) != null) {
-                    if (StringUtils.isBlank(line))
-                        continue;
-                    toPut.add(line.getBytes(StandardCharsets.UTF_8));
-                }
-            } catch (IOException x) {
-                System.err.format("IOException: %s%n", x);
-            }
-        }
+        updateIterator();
     }
 
     @Override
     public void nextTuple() {
         if (!active)
             return;
-        if (toPut.isEmpty())
+
+        String line = nextLine();
+
+        if (StringUtils.isBlank(line)) {
             return;
-        byte[] head = toPut.removeFirst();
-        List<Object> fields = this._scheme.deserialize(head);
+        }
+
+        List<Object> fields = this._scheme.deserialize(line.getBytes());
         this._collector.emit(fields, fields.get(0).toString());
     }
 
