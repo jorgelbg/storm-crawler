@@ -116,8 +116,6 @@ public class FileSpout extends BaseRichSpout {
         } catch (NoSuchElementException e) {
             if (_inputPos < _inputFiles.length - 1) {
                 updateIterator();
-            } else {
-                return null; // no more lines or files
             }
         }
 
